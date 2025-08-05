@@ -647,6 +647,63 @@ class Flow(BaseModel):
             "block_names": [block.block_name for block in self.blocks],
         }
 
+    def print_info(self) -> None:
+        """Print formatted flow information using Rich."""
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.table import Table
+        from rich.tree import Tree
+        from rich.text import Text
+
+        console = Console()
+        
+        # Create main tree structure
+        flow_tree = Tree(f"[bold blue]{self.metadata.name}[/bold blue] Flow")
+        
+        # Metadata section
+        metadata_branch = flow_tree.add("[bold green]Metadata[/bold green]")
+        metadata_branch.add(f"Version: [cyan]{self.metadata.version}[/cyan]")
+        metadata_branch.add(f"Author: [cyan]{self.metadata.author}[/cyan]")
+        if self.metadata.description:
+            metadata_branch.add(f"Description: [dim]{self.metadata.description}[/dim]")
+        
+        # Parameters section
+        if self.parameters:
+            params_branch = flow_tree.add("[bold yellow]Parameters[/bold yellow]")
+            for name, param in self.parameters.items():
+                param_info = f"[cyan]{name}[/cyan]: {param.type_hint}"
+                if param.default is not None:
+                    param_info += f" = [dim]{param.default}[/dim]"
+                params_branch.add(param_info)
+        
+        # Blocks overview
+        blocks_branch = flow_tree.add(f"[bold magenta]Blocks[/bold magenta] ({len(self.blocks)} total)")
+        
+        # Create blocks table
+        blocks_table = Table(show_header=True, header_style="bold")
+        blocks_table.add_column("Block Name", style="cyan")
+        blocks_table.add_column("Type", style="green")
+        blocks_table.add_column("Input Cols", style="yellow")
+        blocks_table.add_column("Output Cols", style="red")
+        
+        for block in self.blocks:
+            input_cols = getattr(block, "input_cols", None)
+            output_cols = getattr(block, "output_cols", None)
+            
+            blocks_table.add_row(
+                block.block_name,
+                block.__class__.__name__,
+                str(input_cols) if input_cols else "[dim]None[/dim]",
+                str(output_cols) if output_cols else "[dim]None[/dim]"
+            )
+        
+        # Print everything
+        console.print()
+        console.print(Panel(flow_tree, title="Flow Information", border_style="blue"))
+        console.print()
+        console.print(Panel(blocks_table, title="Block Details", border_style="magenta"))
+        console.print()
+
     def to_yaml(self, output_path: str) -> None:
         """Save flow configuration to YAML file.
 
