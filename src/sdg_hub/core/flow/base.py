@@ -648,18 +648,36 @@ class Flow(BaseModel):
         }
 
     def print_info(self) -> None:
-        """Print formatted flow information using Rich."""
+        """
+        Print an interactive summary of the Flow in the console.
+
+        The summary contains:
+        1. Flow metadata (name, version, author, description)
+        2. Defined runtime parameters with type hints and defaults
+        3. A table of all blocks with their input and output columns
+
+        Notes
+        -----
+        Uses the `rich` library for colourised output; install with
+        `pip install rich` if not already present.
+
+        Returns
+        -------
+        None
+        """
+        
         from rich.console import Console
         from rich.panel import Panel
         from rich.table import Table
         from rich.tree import Tree
-        from rich.text import Text
 
         console = Console()
         
         # Create main tree structure
         flow_tree = Tree(f"[bold blue]{self.metadata.name}[/bold blue] Flow")
         
+        flow_tree.add(f"[bold magenta]Blocks[/bold magenta] ({len(self.blocks)} total)")
+
         # Metadata section
         metadata_branch = flow_tree.add("[bold green]Metadata[/bold green]")
         metadata_branch.add(f"Version: [cyan]{self.metadata.version}[/cyan]")
