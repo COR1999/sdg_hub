@@ -2,7 +2,7 @@
 """Client manager for LLM operations supporting all providers via LiteLLM."""
 
 # Standard
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional, Union
 import asyncio
 
 # Third Party
@@ -56,15 +56,17 @@ class LLMClientManager:
 
         self._is_loaded = True
 
-        logger.info(
-            f"Loaded LLM client for model '{self.config.model}'",
-            extra={
-                "model": self.config.model,
-                "provider": self.config.get_provider(),
-                "is_local": self.config.is_local_model(),
-                "api_base": self.config.api_base,
-            },
-        )
+        # Only log when model is actually configured
+        if self.config.model:
+            logger.info(
+                f"Loaded LLM client for model '{self.config.model}'",
+                extra={
+                    "model": self.config.model,
+                    "provider": self.config.get_provider(),
+                    "is_local": self.config.is_local_model(),
+                    "api_base": self.config.api_base,
+                },
+            )
 
     def unload(self) -> None:
         """Unload the client and clean up resources."""
@@ -106,8 +108,8 @@ class LLMClientManager:
             )
 
     def create_completion(
-        self, messages: List[Dict[str, Any]], **overrides: Any
-    ) -> Union[str, List[str]]:
+        self, messages: list[dict[str, Any]], **overrides: Any
+    ) -> Union[str, list[str]]:
         """Create a completion using LiteLLM.
 
         Parameters
@@ -158,8 +160,8 @@ class LLMClientManager:
             return response.choices[0].message.content
 
     async def acreate_completion(
-        self, messages: List[Dict[str, Any]], **overrides: Any
-    ) -> Union[str, List[str]]:
+        self, messages: list[dict[str, Any]], **overrides: Any
+    ) -> Union[str, list[str]]:
         """Create an async completion using LiteLLM.
 
         Parameters
@@ -210,8 +212,8 @@ class LLMClientManager:
             return response.choices[0].message.content
 
     def create_completions_batch(
-        self, messages_list: List[List[Dict[str, Any]]], **overrides: Any
-    ) -> List[Union[str, List[str]]]:
+        self, messages_list: list[list[dict[str, Any]]], **overrides: Any
+    ) -> list[Union[str, list[str]]]:
         """Create multiple completions in batch.
 
         Parameters
@@ -234,8 +236,8 @@ class LLMClientManager:
         return results
 
     async def acreate_completions_batch(
-        self, messages_list: List[List[Dict[str, Any]]], **overrides: Any
-    ) -> List[Union[str, List[str]]]:
+        self, messages_list: list[list[dict[str, Any]]], **overrides: Any
+    ) -> list[Union[str, list[str]]]:
         """Create multiple completions in batch asynchronously.
 
         Parameters
@@ -257,8 +259,8 @@ class LLMClientManager:
         return await asyncio.gather(*tasks)
 
     def _build_completion_kwargs(
-        self, messages: List[Dict[str, Any]], config: LLMConfig
-    ) -> Dict[str, Any]:
+        self, messages: list[dict[str, Any]], config: LLMConfig
+    ) -> dict[str, Any]:
         """Build kwargs for LiteLLM completion call.
 
         Parameters
@@ -291,7 +293,7 @@ class LLMClientManager:
 
         return kwargs
 
-    def _call_litellm_completion(self, kwargs: Dict[str, Any]) -> Any:
+    def _call_litellm_completion(self, kwargs: dict[str, Any]) -> Any:
         """Call LiteLLM completion with error handling.
 
         Parameters
@@ -329,7 +331,7 @@ class LLMClientManager:
 
         return response
 
-    async def _call_litellm_acompletion(self, kwargs: Dict[str, Any]) -> Any:
+    async def _call_litellm_acompletion(self, kwargs: dict[str, Any]) -> Any:
         """Call LiteLLM async completion with error handling.
 
         Parameters
@@ -362,7 +364,7 @@ class LLMClientManager:
 
         return response
 
-    def get_model_info(self) -> Dict[str, Any]:
+    def get_model_info(self) -> dict[str, Any]:
         """Get information about the configured model.
 
         Returns

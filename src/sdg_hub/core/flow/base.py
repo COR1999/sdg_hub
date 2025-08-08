@@ -3,7 +3,7 @@
 
 # Standard
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional, Union
 
 # Third Party
 from datasets import Dataset
@@ -13,8 +13,8 @@ import yaml
 # Local
 from ..blocks.base import BaseBlock
 from ..blocks.registry import BlockRegistry
-from ..utils.logger_config import setup_logger
 from ..utils.error_handling import EmptyDatasetError, FlowValidationError
+from ..utils.logger_config import setup_logger
 from ..utils.path_resolution import resolve_path
 from .metadata import FlowMetadata, FlowParameter
 from .migration import FlowMigration
@@ -40,27 +40,28 @@ class Flow(BaseModel):
         Runtime parameters that can be overridden during execution.
     """
 
-    blocks: List[BaseBlock] = Field(
+    blocks: list[BaseBlock] = Field(
         default_factory=list,
         description="Ordered list of blocks to execute in the flow",
     )
     metadata: FlowMetadata = Field(
         description="Flow metadata including name, version, author, etc."
     )
-    parameters: Dict[str, FlowParameter] = Field(
+    parameters: dict[str, FlowParameter] = Field(
         default_factory=dict,
         description="Runtime parameters that can be overridden during execution",
     )
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
-    
+
     # Private attributes (not serialized)
-    _migrated_runtime_params: Dict[str, Dict[str, Any]] = {}
+    _migrated_runtime_params: dict[str, dict[str, Any]] = {}
     _llm_client: Any = None  # Only used for backward compatibility with old YAMLs
+    _model_config_set: bool = False  # Track if model configuration has been set
 
     @field_validator("blocks")
     @classmethod
-    def validate_blocks(cls, v: List[BaseBlock]) -> List[BaseBlock]:
+    def validate_blocks(cls, v: list[BaseBlock]) -> list[BaseBlock]:
         """Validate that all blocks are BaseBlock instances."""
         if not v:
             return v
@@ -76,8 +77,8 @@ class Flow(BaseModel):
     @field_validator("parameters")
     @classmethod
     def validate_parameters(
-        cls, v: Dict[str, FlowParameter]
-    ) -> Dict[str, FlowParameter]:
+        cls, v: dict[str, FlowParameter]
+    ) -> dict[str, FlowParameter]:
         """Validate parameter names and ensure they are FlowParameter instances."""
         if not v:
             return v
@@ -140,7 +141,7 @@ class Flow(BaseModel):
 
         # Load YAML file
         try:
-            with open(yaml_path, "r", encoding="utf-8") as f:
+            with open(yaml_path, encoding="utf-8") as f:
                 flow_config = yaml.safe_load(f)
         except FileNotFoundError as exc:
             raise FileNotFoundError(f"Flow file not found: {yaml_path}") from exc
@@ -153,15 +154,19 @@ class Flow(BaseModel):
         if is_old_format:
             logger.info(f"Detected old format flow, migrating: {yaml_path}")
             if client is None:
-                logger.warning("Old format YAML detected but no client provided. LLMBlocks may fail.")
-            flow_config, migrated_runtime_params = FlowMigration.migrate_to_new_format(flow_config, yaml_path)
+                logger.warning(
+                    "Old format YAML detected but no client provided. LLMBlocks may fail."
+                )
+            flow_config, migrated_runtime_params = FlowMigration.migrate_to_new_format(
+                flow_config, yaml_path
+            )
 
         # Validate YAML structure
         validator = FlowValidator()
         validation_errors = validator.validate_yaml_structure(flow_config)
         if validation_errors:
             raise FlowValidationError(
-                f"Invalid flow configuration:\n" + "\n".join(validation_errors)
+                "Invalid flow configuration:\n" + "\n".join(validation_errors)
             )
 
         # Extract and validate metadata
@@ -169,21 +174,7 @@ class Flow(BaseModel):
         if "name" not in metadata_dict:
             metadata_dict["name"] = Path(yaml_path).stem
 
-        # Handle backward compatibility for recommended_model -> recommended_models
-        if (
-            "recommended_model" in metadata_dict
-            and "recommended_models" not in metadata_dict
-        ):
-            old_model = metadata_dict.pop("recommended_model")
-            if old_model:
-                # Local
-                from .metadata import ModelCompatibility, ModelOption
-
-                metadata_dict["recommended_models"] = [
-                    ModelOption(
-                        name=old_model, compatibility=ModelCompatibility.RECOMMENDED
-                    )
-                ]
+        # Note: Old format compatibility removed - only new RecommendedModels format supported
 
         try:
             metadata = FlowMetadata(**metadata_dict)
@@ -208,12 +199,18 @@ class Flow(BaseModel):
         for i, block_config in enumerate(block_configs):
             try:
                 # Inject client for deprecated LLMBlocks if this is an old format flow
-                if is_old_format and block_config.get("block_type") == "LLMBlock" and client is not None:
+                if (
+                    is_old_format
+                    and block_config.get("block_type") == "LLMBlock"
+                    and client is not None
+                ):
                     if "block_config" not in block_config:
                         block_config["block_config"] = {}
                     block_config["block_config"]["client"] = client
-                    logger.debug(f"Injected client for deprecated LLMBlock: {block_config['block_config'].get('block_name')}")
-                
+                    logger.debug(
+                        f"Injected client for deprecated LLMBlock: {block_config['block_config'].get('block_name')}"
+                    )
+
                 block = cls._create_block_from_config(block_config, yaml_dir)
                 blocks.append(block)
             except Exception as exc:
@@ -229,6 +226,16 @@ class Flow(BaseModel):
                 flow._migrated_runtime_params = migrated_runtime_params
             if is_old_format and client is not None:
                 flow._llm_client = client
+
+            # Check if this is a flow without LLM blocks
+            llm_blocks = flow._detect_llm_blocks()
+            if not llm_blocks:
+                # No LLM blocks, so no model config needed
+                flow._model_config_set = True
+            else:
+                # LLM blocks present - user must call set_model_config()
+                flow._model_config_set = False
+
             return flow
         except Exception as exc:
             raise FlowValidationError(f"Flow validation failed: {exc}") from exc
@@ -236,7 +243,7 @@ class Flow(BaseModel):
     @classmethod
     def _create_block_from_config(
         cls,
-        block_config: Dict[str, Any],
+        block_config: dict[str, Any],
         yaml_dir: Path,
     ) -> BaseBlock:
         """Create a block instance from configuration with validation.
@@ -272,7 +279,9 @@ class Flow(BaseModel):
         except KeyError as exc:
             # Get all available blocks from all categories
             all_blocks = BlockRegistry.all()
-            available_blocks = ", ".join([block for blocks in all_blocks.values() for block in blocks])
+            available_blocks = ", ".join(
+                [block for blocks in all_blocks.values() for block in blocks]
+            )
             raise FlowValidationError(
                 f"Block type '{block_type_name}' not found in registry. "
                 f"Available blocks: {available_blocks}"
@@ -300,8 +309,8 @@ class Flow(BaseModel):
 
     @classmethod
     def _resolve_config_paths(
-        cls, paths: Union[str, List[str], Dict[str, str]], yaml_dir: Path
-    ) -> Union[str, List[str], Dict[str, str]]:
+        cls, paths: Union[str, list[str], dict[str, str]], yaml_dir: Path
+    ) -> Union[str, list[str], dict[str, str]]:
         """Resolve configuration file paths relative to YAML directory."""
         if isinstance(paths, str):
             return str(yaml_dir / paths)
@@ -314,9 +323,12 @@ class Flow(BaseModel):
     def generate(
         self,
         dataset: Dataset,
-        runtime_params: Optional[Dict[str, Dict[str, Any]]] = None,
+        runtime_params: Optional[dict[str, dict[str, Any]]] = None,
     ) -> Dataset:
         """Execute the flow blocks in sequence to generate data.
+
+        Note: For flows with LLM blocks, set_model_config() must be called first
+        to configure model settings before calling generate().
 
         Parameters
         ----------
@@ -339,7 +351,7 @@ class Flow(BaseModel):
         EmptyDatasetError
             If input dataset is empty or any block produces an empty dataset.
         FlowValidationError
-            If flow validation fails.
+            If flow validation fails or if model configuration is required but not set.
         """
         # Validate preconditions
         if not self.blocks:
@@ -347,6 +359,15 @@ class Flow(BaseModel):
 
         if len(dataset) == 0:
             raise EmptyDatasetError("Input dataset is empty")
+
+        # Check if model configuration has been set for flows with LLM blocks
+        llm_blocks = self._detect_llm_blocks()
+        if llm_blocks and not self._model_config_set:
+            raise FlowValidationError(
+                f"Model configuration required before generate(). "
+                f"Found {len(llm_blocks)} LLM blocks: {sorted(llm_blocks)}. "
+                f"Call flow.set_model_config() first."
+            )
 
         # Validate dataset requirements
         dataset_errors = self.validate_dataset(dataset)
@@ -380,13 +401,15 @@ class Flow(BaseModel):
             try:
                 # Check if this is a deprecated block and skip validations
                 is_deprecated_block = (
-                    hasattr(block, '__class__') and 
-                    hasattr(block.__class__, '__module__') and
-                    'deprecated_blocks' in block.__class__.__module__
+                    hasattr(block, "__class__")
+                    and hasattr(block.__class__, "__module__")
+                    and "deprecated_blocks" in block.__class__.__module__
                 )
-                
+
                 if is_deprecated_block:
-                    logger.debug(f"Skipping validations for deprecated block: {block.block_name}")
+                    logger.debug(
+                        f"Skipping validations for deprecated block: {block.block_name}"
+                    )
                     # Call generate() directly to skip validations, but keep the runtime params
                     current_dataset = block.generate(current_dataset, **block_kwargs)
                 else:
@@ -422,12 +445,270 @@ class Flow(BaseModel):
         return current_dataset
 
     def _prepare_block_kwargs(
-        self, block: BaseBlock, runtime_params: Dict[str, Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        self, block: BaseBlock, runtime_params: dict[str, dict[str, Any]]
+    ) -> dict[str, Any]:
         """Prepare execution parameters for a block."""
         return runtime_params.get(block.block_name, {})
 
-    def validate_dataset(self, dataset: Dataset) -> List[str]:
+    def set_model_config(
+        self,
+        model: Optional[str] = None,
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
+        blocks: Optional[list[str]] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Configure model settings for LLM blocks in this flow (in-place).
+
+        This method is designed to work with model-agnostic flow definitions where
+        LLM blocks don't have hardcoded model configurations in the YAML. Instead,
+        model settings are configured at runtime using this method.
+
+        Based on LiteLLM's basic usage pattern, this method focuses on the core
+        parameters (model, api_base, api_key) with additional parameters passed via kwargs.
+
+        By default, auto-detects all LLM blocks in the flow and applies configuration to them.
+        Optionally allows targeting specific blocks only.
+
+        Parameters
+        ----------
+        model : Optional[str]
+            Model name to configure (e.g., "hosted_vllm/openai/gpt-oss-120b").
+        api_base : Optional[str]
+            API base URL to configure (e.g., "http://localhost:8101/v1").
+        api_key : Optional[str]
+            API key to configure.
+        blocks : Optional[List[str]]
+            Specific block names to target. If None, auto-detects all LLM blocks.
+        **kwargs : Any
+            Additional model parameters (e.g., temperature, max_tokens, top_p, etc.).
+
+        Examples
+        --------
+        >>> # Recommended workflow: discover -> initialize -> set_model_config -> generate
+        >>> flow = Flow.from_yaml("path/to/flow.yaml")  # Initialize flow
+        >>> flow.set_model_config(  # Configure model settings
+        ...     model="hosted_vllm/openai/gpt-oss-120b",
+        ...     api_base="http://localhost:8101/v1",
+        ...     api_key="your_key",
+        ...     temperature=0.7,
+        ...     max_tokens=2048
+        ... )
+        >>> result = flow.generate(dataset)  # Generate data
+
+        >>> # Configure only specific blocks
+        >>> flow.set_model_config(
+        ...     model="hosted_vllm/openai/gpt-oss-120b",
+        ...     api_base="http://localhost:8101/v1",
+        ...     blocks=["gen_detailed_summary", "knowledge_generation"]
+        ... )
+
+        Raises
+        ------
+        ValueError
+            If no configuration parameters are provided or if specified blocks don't exist.
+        """
+        # Build the configuration parameters dictionary
+        config_params = {}
+        if model is not None:
+            config_params["model"] = model
+        if api_base is not None:
+            config_params["api_base"] = api_base
+        if api_key is not None:
+            config_params["api_key"] = api_key
+
+        # Add any additional kwargs (temperature, max_tokens, etc.)
+        config_params.update(kwargs)
+
+        # Validate that at least one parameter is provided
+        if not config_params:
+            raise ValueError(
+                "At least one configuration parameter must be provided "
+                "(model, api_base, api_key, or **kwargs)"
+            )
+
+        # Determine target blocks
+        if blocks is not None:
+            # Validate that specified blocks exist in the flow
+            existing_block_names = {block.block_name for block in self.blocks}
+            invalid_blocks = set(blocks) - existing_block_names
+            if invalid_blocks:
+                raise ValueError(
+                    f"Specified blocks not found in flow: {sorted(invalid_blocks)}. "
+                    f"Available blocks: {sorted(existing_block_names)}"
+                )
+            target_block_names = set(blocks)
+            logger.info(
+                f"Targeting specific blocks for configuration: {sorted(target_block_names)}"
+            )
+        else:
+            # Auto-detect LLM blocks
+            target_block_names = set(self._detect_llm_blocks())
+            logger.info(
+                f"Auto-detected {len(target_block_names)} LLM blocks for configuration: {sorted(target_block_names)}"
+            )
+
+        # Apply configuration to target blocks
+        modified_count = 0
+        for block in self.blocks:
+            if block.block_name in target_block_names:
+                for param_name, param_value in config_params.items():
+                    if hasattr(block, param_name):
+                        old_value = getattr(block, param_name)
+                        setattr(block, param_name, param_value)
+                        logger.debug(
+                            f"Block '{block.block_name}': {param_name} "
+                            f"'{old_value}' -> '{param_value}'"
+                        )
+                    else:
+                        logger.warning(
+                            f"Block '{block.block_name}' ({block.__class__.__name__}) "
+                            f"does not have attribute '{param_name}' - skipping"
+                        )
+
+                # Reinitialize client manager for LLM blocks after updating config
+                if hasattr(block, "_reinitialize_client_manager"):
+                    block._reinitialize_client_manager()
+
+                modified_count += 1
+
+        if modified_count > 0:
+            # Enhanced logging showing what was configured
+            param_summary = []
+            for param_name, param_value in config_params.items():
+                if param_name == "model":
+                    param_summary.append(f"model: '{param_value}'")
+                elif param_name == "api_base":
+                    param_summary.append(f"api_base: '{param_value}'")
+                else:
+                    param_summary.append(f"{param_name}: {param_value}")
+
+            logger.info(
+                f"Successfully configured {modified_count} LLM blocks with: {', '.join(param_summary)}"
+            )
+            logger.info(f"Configured blocks: {sorted(target_block_names)}")
+
+            # Mark that model configuration has been set
+            self._model_config_set = True
+        else:
+            logger.warning(
+                "No blocks were modified - check block names or LLM block detection"
+            )
+
+    def _detect_llm_blocks(self) -> list[str]:
+        """Detect LLM blocks in the flow by checking for model-related attribute existence.
+
+        LLM blocks are identified by having model, api_base, or api_key attributes,
+        regardless of their values (they may be None until set_model_config() is called).
+
+        Returns
+        -------
+        List[str]
+            List of block names that have LLM-related attributes.
+        """
+        llm_blocks = []
+
+        for block in self.blocks:
+            block_type = block.__class__.__name__
+            block_name = block.block_name
+
+            # Check by attribute existence (not value) - LLM blocks have these attributes even if None
+            has_model_attr = hasattr(block, "model")
+            has_api_base_attr = hasattr(block, "api_base")
+            has_api_key_attr = hasattr(block, "api_key")
+
+            # A block is considered an LLM block if it has any LLM-related attributes
+            is_llm_block = has_model_attr or has_api_base_attr or has_api_key_attr
+
+            if is_llm_block:
+                llm_blocks.append(block_name)
+                logger.debug(
+                    f"Detected LLM block '{block_name}' ({block_type}): "
+                    f"has_model_attr={has_model_attr}, has_api_base_attr={has_api_base_attr}, has_api_key_attr={has_api_key_attr}"
+                )
+
+        return llm_blocks
+
+    def is_model_config_required(self) -> bool:
+        """Check if model configuration is required for this flow.
+
+        Returns
+        -------
+        bool
+            True if flow has LLM blocks and needs model configuration.
+        """
+        return len(self._detect_llm_blocks()) > 0
+
+    def is_model_config_set(self) -> bool:
+        """Check if model configuration has been set.
+
+        Returns
+        -------
+        bool
+            True if model configuration has been set or is not required.
+        """
+        return self._model_config_set
+
+    def reset_model_config(self) -> None:
+        """Reset model configuration flag (useful for testing or reconfiguration).
+
+        After calling this, set_model_config() must be called again before generate().
+        """
+        if self.is_model_config_required():
+            self._model_config_set = False
+            logger.info(
+                "Model configuration flag reset - call set_model_config() before generate()"
+            )
+
+    def get_default_model(self) -> Optional[str]:
+        """Get the default recommended model for this flow.
+
+        Returns
+        -------
+        Optional[str]
+            Default model name, or None if no models specified.
+
+        Examples
+        --------
+        >>> flow = Flow.from_yaml("path/to/flow.yaml")
+        >>> default_model = flow.get_default_model()
+        >>> print(f"Default model: {default_model}")
+        """
+        if not self.metadata.recommended_models:
+            return None
+        return self.metadata.recommended_models.default
+
+    def get_model_recommendations(self) -> dict[str, Any]:
+        """Get a clean summary of model recommendations for this flow.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary with model recommendations in user-friendly format.
+
+        Examples
+        --------
+        >>> flow = Flow.from_yaml("path/to/flow.yaml")
+        >>> recommendations = flow.get_model_recommendations()
+        >>> print("Model recommendations:")
+        >>> print(f"  Default: {recommendations['default']}")
+        >>> print(f"  Compatible: {recommendations['compatible']}")
+        >>> print(f"  Experimental: {recommendations['experimental']}")
+        """
+        if not self.metadata.recommended_models:
+            return {
+                "default": None,
+                "compatible": [],
+                "experimental": [],
+            }
+
+        return {
+            "default": self.metadata.recommended_models.default,
+            "compatible": self.metadata.recommended_models.compatible,
+            "experimental": self.metadata.recommended_models.experimental,
+        }
+
+    def validate_dataset(self, dataset: Dataset) -> list[str]:
         """Validate dataset against flow requirements."""
         errors = []
 
@@ -447,8 +728,8 @@ class Flow(BaseModel):
         self,
         dataset: Dataset,
         sample_size: int = 2,
-        runtime_params: Optional[Dict[str, Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        runtime_params: Optional[dict[str, dict[str, Any]]] = None,
+    ) -> dict[str, Any]:
         """Perform a dry run of the flow with a subset of data.
 
         Parameters
@@ -527,13 +808,15 @@ class Flow(BaseModel):
 
                 # Check if this is a deprecated block and skip validations
                 is_deprecated_block = (
-                    hasattr(block, '__class__') and 
-                    hasattr(block.__class__, '__module__') and
-                    'deprecated_blocks' in block.__class__.__module__
+                    hasattr(block, "__class__")
+                    and hasattr(block.__class__, "__module__")
+                    and "deprecated_blocks" in block.__class__.__module__
                 )
-                
+
                 if is_deprecated_block:
-                    logger.debug(f"Dry run: Skipping validations for deprecated block: {block.block_name}")
+                    logger.debug(
+                        f"Dry run: Skipping validations for deprecated block: {block.block_name}"
+                    )
                     # Call generate() directly to skip validations, but keep the runtime params
                     current_dataset = block.generate(current_dataset, **block_kwargs)
                 else:
@@ -627,7 +910,7 @@ class Flow(BaseModel):
             blocks=new_blocks, metadata=self.metadata, parameters=self.parameters
         )
 
-    def get_info(self) -> Dict[str, Any]:
+    def get_info(self) -> dict[str, Any]:
         """Get information about the flow."""
         return {
             "metadata": self.metadata.model_dump(),
