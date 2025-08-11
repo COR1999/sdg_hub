@@ -975,7 +975,9 @@ class Flow(BaseModel):
                 params_branch.add(param_info)
 
         # Blocks overview
-        flow_tree.add(f"[bold bright_magenta]Blocks[/bold bright_magenta] ({len(self.blocks)} total)")
+        flow_tree.add(
+            f"[bold bright_magenta]Blocks[/bold bright_magenta] ({len(self.blocks)} total)"
+        )
 
         # Create blocks table
         blocks_table = Table(show_header=True, header_style="bold bright_white")
