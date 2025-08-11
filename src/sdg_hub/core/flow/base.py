@@ -956,18 +956,30 @@ class Flow(BaseModel):
         console = Console()
 
         # Create main tree structure
-        flow_tree = Tree(f"[bold bright_blue]{self.metadata.name}[/bold bright_blue] Flow")
+        flow_tree = Tree(
+            f"[bold bright_blue]{self.metadata.name}[/bold bright_blue] Flow"
+        )
 
         # Metadata section
-        metadata_branch = flow_tree.add("[bold bright_green]Metadata[/bold bright_green]")
-        metadata_branch.add(f"Version: [bright_cyan]{self.metadata.version}[/bright_cyan]")
-        metadata_branch.add(f"Author: [bright_cyan]{self.metadata.author}[/bright_cyan]")
+        metadata_branch = flow_tree.add(
+            "[bold bright_green]Metadata[/bold bright_green]"
+        )
+        metadata_branch.add(
+            f"Version: [bright_cyan]{self.metadata.version}[/bright_cyan]"
+        )
+        metadata_branch.add(
+            f"Author: [bright_cyan]{self.metadata.author}[/bright_cyan]"
+        )
         if self.metadata.description:
-            metadata_branch.add(f"Description: [white]{self.metadata.description}[/white]")
+            metadata_branch.add(
+                f"Description: [white]{self.metadata.description}[/white]"
+            )
 
         # Parameters section
         if self.parameters:
-            params_branch = flow_tree.add("[bold bright_yellow]Parameters[/bold bright_yellow]")
+            params_branch = flow_tree.add(
+                "[bold bright_yellow]Parameters[/bold bright_yellow]"
+            )
             for name, param in self.parameters.items():
                 param_info = f"[bright_cyan]{name}[/bright_cyan]: [white]{param.type_hint}[/white]"
                 if param.default is not None:
@@ -994,15 +1006,27 @@ class Flow(BaseModel):
                 block.block_name,
                 block.__class__.__name__,
                 str(input_cols) if input_cols else "[bright_black]None[/bright_black]",
-                str(output_cols) if output_cols else "[bright_black]None[/bright_black]",
+                str(output_cols)
+                if output_cols
+                else "[bright_black]None[/bright_black]",
             )
 
         # Print everything
         console.print()
-        console.print(Panel(flow_tree, title="[bold bright_white]Flow Information[/bold bright_white]", border_style="bright_blue"))
+        console.print(
+            Panel(
+                flow_tree,
+                title="[bold bright_white]Flow Information[/bold bright_white]",
+                border_style="bright_blue",
+            )
+        )
         console.print()
         console.print(
-            Panel(blocks_table, title="[bold bright_white]Block Details[/bold bright_white]", border_style="bright_magenta")
+            Panel(
+                blocks_table,
+                title="[bold bright_white]Block Details[/bold bright_white]",
+                border_style="bright_magenta",
+            )
         )
         console.print()
 
